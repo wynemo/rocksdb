@@ -12,27 +12,19 @@ namespace ROCKSDB_NAMESPACE {
 #if defined(NPERF_CONTEXT) || !defined(ROCKSDB_SUPPORT_THREAD_LOCAL)
 PerfContext perf_context;
 #else
-#if defined(OS_SOLARIS)
-__thread PerfContext perf_context_;
-#else
 thread_local PerfContext perf_context;
-#endif
 #endif
 
 PerfContext* get_perf_context() {
 #if defined(NPERF_CONTEXT) || !defined(ROCKSDB_SUPPORT_THREAD_LOCAL)
   return &perf_context;
 #else
-#if defined(OS_SOLARIS)
-  return &perf_context_;
-#else
   return &perf_context;
-#endif
 #endif
 }
 
 PerfContext::~PerfContext() {
-#if !defined(NPERF_CONTEXT) && defined(ROCKSDB_SUPPORT_THREAD_LOCAL) && !defined(OS_SOLARIS)
+#if !defined(NPERF_CONTEXT) && defined(ROCKSDB_SUPPORT_THREAD_LOCAL)
   ClearPerLevelPerfContext();
 #endif
 }
