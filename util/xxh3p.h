@@ -61,11 +61,13 @@
 
 /* ===   Compiler specifics   === */
 
-#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* >= C99 */
-#  define XXH_RESTRICT   restrict
+#if defined (__cplusplus)
+#  define XXH_RESTRICT __restrict__
 #else
-/* note : it might be useful to define __restrict or __restrict__ for some C++ compilers */
-#  define XXH_RESTRICT   /* disable */
+#  if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* >= C99 */
+#    define XXH_RESTRICT   restrict
+#  else
+#    define XXH_RESTRICT   /* disable */
 #endif
 
 #if defined(__GNUC__)
