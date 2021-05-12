@@ -68,6 +68,7 @@
 #    define XXH_RESTRICT   restrict
 #  else
 #    define XXH_RESTRICT   /* disable */
+#  endif
 #endif
 
 #if defined(__GNUC__)
