@@ -9,6 +9,7 @@
 
 #pragma once
 #include <vector>
+#include <exception>
 #include "db/flush_scheduler.h"
 #include "db/trim_history_scheduler.h"
 #include "db/write_thread.h"
@@ -223,7 +224,7 @@ class LocalSavePoint {
   }
 
 #ifndef NDEBUG
-  ~LocalSavePoint() { assert(committed_); }
+  ~LocalSavePoint() { if (!std::uncaught_exceptions()) assert(committed_); }
 #endif
   Status commit() {
 #ifndef NDEBUG
