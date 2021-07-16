@@ -113,10 +113,10 @@ bool MemTableListVersion::Get(const LookupKey& key, std::string* value,
 }
 
 void MemTableListVersion::MultiGet(const ReadOptions& read_options,
-                                   MultiGetRange* range, ReadCallback* callback,
-                                   bool* is_blob) {
+                                   MultiGetRange* range,
+                                   ReadCallback* callback) {
   for (auto memtable : memlist_) {
-    memtable->MultiGet(read_options, range, callback, is_blob);
+    memtable->MultiGet(read_options, range, callback);
     if (range->empty()) {
       return;
     }
@@ -334,7 +334,7 @@ bool MemTableList::IsFlushPending() const {
 }
 
 // Returns the memtables that need to be flushed.
-void MemTableList::PickMemtablesToFlush(const uint64_t* max_memtable_id,
+void MemTableList::PickMemtablesToFlush(uint64_t max_memtable_id,
                                         autovector<MemTable*>* ret) {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_PICK_MEMTABLES_TO_FLUSH);
@@ -345,7 +345,7 @@ void MemTableList::PickMemtablesToFlush(const uint64_t* max_memtable_id,
     if (!atomic_flush && m->atomic_flush_seqno_ != kMaxSequenceNumber) {
       atomic_flush = true;
     }
-    if (max_memtable_id != nullptr && m->GetID() > *max_memtable_id) {
+    if (m->GetID() > max_memtable_id) {
       break;
     }
     if (!m->flush_in_progress_) {
@@ -392,7 +392,7 @@ Status MemTableList::TryInstallMemtableFlushResults(
     autovector<MemTable*>* to_delete, FSDirectory* db_directory,
     LogBuffer* log_buffer,
     std::list<std::unique_ptr<FlushJobInfo>>* committed_flush_jobs_info,
-    IOStatus* io_s) {
+    IOStatus* io_s, bool write_edits) {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_MEMTABLE_INSTALL_FLUSH_RESULTS);
   mu->AssertHeld();
@@ -476,20 +476,27 @@ Status MemTableList::TryInstallMemtableFlushResults(
       uint64_t min_wal_number_to_keep = 0;
       if (vset->db_options()->allow_2pc) {
         assert(edit_list.size() > 0);
+        // Note that if mempurge is successful, the edit_list will
+        // not be applicable (contains info of new min_log number to keep,
+        // and level 0 file path of SST file created during normal flush,
+        // so both pieces of information are irrelevant after a successful
+        // mempurge operation).
         min_wal_number_to_keep = PrecomputeMinLogNumberToKeep2PC(
             vset, *cfd, edit_list, memtables_to_flush, prep_tracker);
+
         // We piggyback the information of  earliest log file to keep in the
         // manifest entry for the last file flushed.
         edit_list.back()->SetMinLogNumberToKeep(min_wal_number_to_keep);
-      } else {
-        min_wal_number_to_keep =
-            PrecomputeMinLogNumberToKeepNon2PC(vset, *cfd, edit_list);
       }
 
       std::unique_ptr<VersionEdit> wal_deletion;
       if (vset->db_options()->track_and_verify_wals_in_manifest) {
-        const auto& wals = vset->GetWalSet().GetWals();
-        if (!wals.empty() && min_wal_number_to_keep > wals.begin()->first) {
+        if (!vset->db_options()->allow_2pc) {
+          min_wal_number_to_keep =
+              PrecomputeMinLogNumberToKeepNon2PC(vset, *cfd, edit_list);
+        }
+        if (min_wal_number_to_keep >
+            vset->GetWalSet().GetMinWalNumberToKeep()) {
           wal_deletion.reset(new VersionEdit);
           wal_deletion->DeleteWalsBefore(min_wal_number_to_keep);
           edit_list.push_back(wal_deletion.get());
@@ -501,13 +508,25 @@ Status MemTableList::TryInstallMemtableFlushResults(
         RemoveMemTablesOrRestoreFlags(status, cfd, batch_count, log_buffer,
                                       to_delete, mu);
       };
-
-      // this can release and reacquire the mutex.
-      s = vset->LogAndApply(cfd, mutable_cf_options, edit_list, mu,
-                            db_directory, /*new_descriptor_log=*/false,
-                            /*column_family_options=*/nullptr,
-                            manifest_write_cb);
-      *io_s = vset->io_status();
+      if (write_edits) {
+        // this can release and reacquire the mutex.
+        s = vset->LogAndApply(cfd, mutable_cf_options, edit_list, mu,
+                              db_directory, /*new_descriptor_log=*/false,
+                              /*column_family_options=*/nullptr,
+                              manifest_write_cb);
+        *io_s = vset->io_status();
+      } else {
+        // If write_edit is false (e.g: successful mempurge),
+        // then remove old memtables, wake up manifest write queue threads,
+        // and don't commit anything to the manifest file.
+        RemoveMemTablesOrRestoreFlags(s, cfd, batch_count, log_buffer,
+                                      to_delete, mu);
+        // Notify new head of manifest write queue.
+        // wake up all the waiting writers
+        // TODO(bjlemaire): explain full reason needed or investigate more.
+        vset->WakeUpWaitingManifestWriters();
+        *io_s = IOStatus::OK();
+      }
     }
   }
   commit_in_progress_ = false;
@@ -515,18 +534,20 @@ Status MemTableList::TryInstallMemtableFlushResults(
 }
 
 // New memtables are inserted at the front of the list.
-void MemTableList::Add(MemTable* m, autovector<MemTable*>* to_delete) {
+void MemTableList::Add(MemTable* m, autovector<MemTable*>* to_delete,
+                       bool trigger_flush) {
   assert(static_cast<int>(current_->memlist_.size()) >= num_flush_not_started_);
   InstallNewVersion();
   // this method is used to move mutable memtable into an immutable list.
   // since mutable memtable is already refcounted by the DBImpl,
-  // and when moving to the imutable list we don't unref it,
+  // and when moving to the immutable list we don't unref it,
   // we don't have to ref the memtable here. we just take over the
   // reference from the DBImpl.
   current_->Add(m, to_delete);
   m->MarkImmutable();
   num_flush_not_started_++;
-  if (num_flush_not_started_ == 1) {
+
+  if (num_flush_not_started_ > 0 && trigger_flush) {
     imm_flush_needed.store(true, std::memory_order_release);
   }
   UpdateCachedValuesFromMemTableListVersion();
@@ -673,21 +694,27 @@ void MemTableList::RemoveMemTablesOrRestoreFlags(
   }
 }
 
-uint64_t MemTableList::PrecomputeMinLogContainingPrepSection(
-    const autovector<MemTable*>& memtables_to_flush) {
+// Returns the earliest log that possibly contain entries
+// from one of the memtables of this memtable_list.
+uint64_t MemTableList::EarliestLogContainingData() {
   uint64_t min_log = 0;
 
   for (auto& m : current_->memlist_) {
-    // Assume the list is very short, we can live with O(m*n). We can optimize
-    // if the performance has some problem.
-    bool should_skip = false;
-    for (MemTable* m_to_flush : memtables_to_flush) {
-      if (m == m_to_flush) {
-        should_skip = true;
-        break;
-      }
+    uint64_t log = m->GetEarliestLogFileNumber();
+    if (log > 0 && (min_log == 0 || log < min_log)) {
+      min_log = log;
     }
-    if (should_skip) {
+  }
+
+  return min_log;
+}
+
+uint64_t MemTableList::PrecomputeMinLogContainingPrepSection(
+    const std::unordered_set<MemTable*>* memtables_to_flush) {
+  uint64_t min_log = 0;
+
+  for (auto& m : current_->memlist_) {
+    if (memtables_to_flush && memtables_to_flush->count(m)) {
       continue;
     }
 
@@ -707,7 +734,8 @@ Status InstallMemtableAtomicFlushResults(
     const autovector<ColumnFamilyData*>& cfds,
     const autovector<const MutableCFOptions*>& mutable_cf_options_list,
     const autovector<const autovector<MemTable*>*>& mems_list, VersionSet* vset,
-    InstrumentedMutex* mu, const autovector<FileMetaData*>& file_metas,
+    LogsWithPrepTracker* prep_tracker, InstrumentedMutex* mu,
+    const autovector<FileMetaData*>& file_metas,
     autovector<MemTable*>* to_delete, FSDirectory* db_directory,
     LogBuffer* log_buffer) {
   AutoThreadOperationStageUpdater stage_updater(
@@ -752,14 +780,20 @@ Status InstallMemtableAtomicFlushResults(
     edit_lists.emplace_back(edits);
   }
 
-  // TODO(cc): after https://github.com/facebook/rocksdb/pull/7570, handle 2pc
-  // here.
+  WalNumber min_wal_number_to_keep = 0;
+  if (vset->db_options()->allow_2pc) {
+    min_wal_number_to_keep = PrecomputeMinLogNumberToKeep2PC(
+        vset, cfds, edit_lists, mems_list, prep_tracker);
+    edit_lists.back().back()->SetMinLogNumberToKeep(min_wal_number_to_keep);
+  }
+
   std::unique_ptr<VersionEdit> wal_deletion;
   if (vset->db_options()->track_and_verify_wals_in_manifest) {
-    uint64_t min_wal_number_to_keep =
-        PrecomputeMinLogNumberToKeepNon2PC(vset, cfds, edit_lists);
-    const auto& wals = vset->GetWalSet().GetWals();
-    if (!wals.empty() && min_wal_number_to_keep > wals.begin()->first) {
+    if (!vset->db_options()->allow_2pc) {
+      min_wal_number_to_keep =
+          PrecomputeMinLogNumberToKeepNon2PC(vset, cfds, edit_lists);
+    }
+    if (min_wal_number_to_keep > vset->GetWalSet().GetMinWalNumberToKeep()) {
       wal_deletion.reset(new VersionEdit);
       wal_deletion->DeleteWalsBefore(min_wal_number_to_keep);
       edit_lists.back().push_back(wal_deletion.get());

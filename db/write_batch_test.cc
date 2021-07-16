@@ -33,7 +33,7 @@ static std::string PrintContents(WriteBatch* b,
   if (merge_operator_supported) {
     options.merge_operator.reset(new TestPutOperator());
   }
-  ImmutableCFOptions ioptions(options);
+  ImmutableOptions ioptions(options);
   WriteBufferManager wb(options.db_write_buffer_size);
   MemTable* mem = new MemTable(cmp, ioptions, MutableCFOptions(options), &wb,
                                kMaxSequenceNumber, 0 /* column_family_id */);
@@ -64,6 +64,7 @@ static std::string PrintContents(WriteBatch* b,
     if (iter == nullptr) {
       continue;
     }
+    EXPECT_OK(iter->status());
     for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
       ParsedInternalKey ikey;
       ikey.clear();
@@ -117,6 +118,7 @@ static std::string PrintContents(WriteBatch* b,
       state.append("@");
       state.append(NumberToString(ikey.sequence));
     }
+    EXPECT_OK(iter->status());
   }
   if (s.ok()) {
     EXPECT_EQ(b->HasPut(), put_count > 0);

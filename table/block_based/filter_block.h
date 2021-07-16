@@ -60,8 +60,11 @@ class FilterBlockBuilder {
 
   virtual bool IsBlockBased() = 0;                    // If is blockbased filter
   virtual void StartBlock(uint64_t block_offset) = 0;  // Start new block filter
-  virtual void Add(const Slice& key) = 0;      // Add a key to current filter
-  virtual size_t NumAdded() const = 0;         // Number of keys added
+  virtual void Add(
+      const Slice& key_without_ts) = 0;        // Add a key to current filter
+  virtual bool IsEmpty() const = 0;            // Empty == none added
+  // For reporting stats on how many entries the builder considered unique
+  virtual size_t EstimateEntriesAdded() = 0;
   Slice Finish() {                             // Generate Filter
     const BlockHandle empty_handle;
     Status dont_care_status;
@@ -158,7 +161,7 @@ class FilterBlockReader {
   }
 
   virtual bool RangeMayExist(const Slice* /*iterate_upper_bound*/,
-                             const Slice& user_key,
+                             const Slice& user_key_without_ts,
                              const SliceTransform* prefix_extractor,
                              const Comparator* /*comparator*/,
                              const Slice* const const_ikey_ptr,
@@ -169,7 +172,7 @@ class FilterBlockReader {
       return true;
     }
     *filter_checked = true;
-    Slice prefix = prefix_extractor->Transform(user_key);
+    Slice prefix = prefix_extractor->Transform(user_key_without_ts);
     return PrefixMayMatch(prefix, prefix_extractor, kNotValid, no_io,
                           const_ikey_ptr, /* get_context */ nullptr,
                           lookup_context);
