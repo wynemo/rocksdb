@@ -814,7 +814,6 @@ class PosixFileSystem : public FileSystem {
                          " acquiring thread " +
                          ToString(prev_info.acquiring_thread),
                      fname, errno);
-      mutex_locked_files.Unlock();
       return result;
     }
 
