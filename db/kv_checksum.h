@@ -57,7 +57,7 @@ typedef ProtectionInfoKVOTS<uint64_t> ProtectionInfoKVOTS64;
 template <typename T>
 class ProtectionInfo {
  public:
-  ProtectionInfo<T>() = default;
+  ProtectionInfo() = default;
 
   Status GetStatus() const;
   ProtectionInfoKVOT<T> ProtectKVOT(const Slice& key, const Slice& value,
@@ -86,7 +86,7 @@ class ProtectionInfo {
   static const uint64_t kSeedS = 0x4A2AB5CBD26F542C;
   static const uint64_t kSeedC = 0x1CB5633EC70B2937;
 
-  ProtectionInfo<T>(T val) : val_(val) {
+  ProtectionInfo(T val) : val_(val) {
     static_assert(sizeof(ProtectionInfo<T>) == sizeof(T), "");
   }
 
@@ -99,7 +99,7 @@ class ProtectionInfo {
 template <typename T>
 class ProtectionInfoKVOT {
  public:
-  ProtectionInfoKVOT<T>() = default;
+  ProtectionInfoKVOT() = default;
 
   ProtectionInfo<T> StripKVOT(const Slice& key, const Slice& value,
                               ValueType op_type, const Slice& timestamp) const;
@@ -121,7 +121,7 @@ class ProtectionInfoKVOT {
   friend class ProtectionInfoKVOTS<T>;
   friend class ProtectionInfoKVOTC<T>;
 
-  ProtectionInfoKVOT<T>(T val) : info_(val) {
+  ProtectionInfoKVOT(T val) : info_(val) {
     static_assert(sizeof(ProtectionInfoKVOT<T>) == sizeof(T), "");
   }
 
@@ -134,7 +134,7 @@ class ProtectionInfoKVOT {
 template <typename T>
 class ProtectionInfoKVOTC {
  public:
-  ProtectionInfoKVOTC<T>() = default;
+  ProtectionInfoKVOTC() = default;
 
   ProtectionInfoKVOT<T> StripC(ColumnFamilyId column_family_id) const;
 
@@ -162,7 +162,7 @@ class ProtectionInfoKVOTC {
  private:
   friend class ProtectionInfoKVOT<T>;
 
-  ProtectionInfoKVOTC<T>(T val) : kvot_(val) {
+  ProtectionInfoKVOTC(T val) : kvot_(val) {
     static_assert(sizeof(ProtectionInfoKVOTC<T>) == sizeof(T), "");
   }
 
@@ -175,7 +175,7 @@ class ProtectionInfoKVOTC {
 template <typename T>
 class ProtectionInfoKVOTS {
  public:
-  ProtectionInfoKVOTS<T>() = default;
+  ProtectionInfoKVOTS() = default;
 
   ProtectionInfoKVOT<T> StripS(SequenceNumber sequence_number) const;
 
@@ -203,7 +203,7 @@ class ProtectionInfoKVOTS {
  private:
   friend class ProtectionInfoKVOT<T>;
 
-  ProtectionInfoKVOTS<T>(T val) : kvot_(val) {
+  ProtectionInfoKVOTS(T val) : kvot_(val) {
     static_assert(sizeof(ProtectionInfoKVOTS<T>) == sizeof(T), "");
   }
 
