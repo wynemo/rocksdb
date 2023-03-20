@@ -6,6 +6,7 @@
 #pragma once
 
 #include "rocksdb/trace_reader_writer.h"
+#include "file/writable_file_writer.h"
 
 namespace ROCKSDB_NAMESPACE {
 
