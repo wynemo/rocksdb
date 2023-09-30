@@ -40,7 +40,7 @@ class BaseDeltaIterator : public Iterator {
                     const Comparator* comparator,
                     const ReadOptions* read_options = nullptr);
 
-  ~BaseDeltaIterator() override {}
+  ~BaseDeltaIterator() override = default;
 
   bool Valid() const override;
   void SeekToFirst() override;
