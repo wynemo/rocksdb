@@ -145,6 +145,10 @@ static inline tokutime_t toku_time_now(void) {
   uint64_t result;
   asm volatile ("rdtime.d %0,$r0" : "=r" (result));
   return result;
+#elif defined(__mips__)
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 #else
 #error No timer implementation for this platform
 #endif
